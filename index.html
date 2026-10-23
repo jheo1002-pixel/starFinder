@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sky Star & Constellation Finder</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Phosphor Icons for clean astronomical/UI icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;600;700&family=Space+Grotesk:wght@400;600&display=swap');
+    
+    * {
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: 'Pretendard', sans-serif;
+    }
+    
+    .font-mono-tech {
+      font-family: 'Space Grotesk', monospace;
+    }
+
+    /* Crosshair pulse animation */
+    @keyframes reticle-pulse {
+      0%, 100% { opacity: 0.6; transform: translate(-50%, -50%) scale(1); }
+      50% { opacity: 0.95; transform: translate(-50%, -50%) scale(1.06); }
+    }
+    .reticle-anim {
+      animation: reticle-pulse 3s infinite ease-in-out;
+    }
+
+    /* Glassmorphism styling */
+    .glass-panel {
+      background: rgba(10, 16, 32, 0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    .glass-btn {
+      background: rgba(22, 33, 62, 0.65);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(130, 170, 255, 0.28);
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .glass-btn:active {
+      transform: scale(0.95);
+      background: rgba(59, 130, 246, 0.35);
+    }
+    .glass-btn.active {
+      background: rgba(59, 130, 246, 0.55);
+      border-color: rgba(96, 165, 250, 0.85);
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+    }
+
+    /* Custom scrollbar for info panel */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-black text-slate-100 overflow-hidden w-screen h-screen relative select-none">
+
+  <!-- Background Camera Video Feed (For AR Mode) -->
+  <video id="cameraFeed" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover hidden z-0 pointer-events-none opacity-45 brightness-90"></video>
+
+  <!-- Sky Canvas Layer -->
+  <canvas id="skyCanvas" class="absolute inset-0 w-full h-full z-10 cursor-grab active:cursor-grabbing"></canvas>
+
+  <!-- HUD Overlay Layer -->
+  <div class="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-3.5 sm:p-5">
+
+    <!-- Header: Location & Compass Indicator -->
+    <header class="flex justify-between items-start gap-2">
+      <!-- Location & Time status -->
+      <div class="glass-panel rounded-2xl px-3.5 py-2.5 flex items-center gap-3 shadow-lg pointer-events-auto">
+        <div class="relative flex items-center justify-center">
+          <span class="animate-ping absolute inline-flex h-2.5 w-2.5 rounded-full bg-cyan-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-cyan-300"></span>
+        </div>
+        <div>
+          <div class="flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
+            <i class="ph ph-map-pin"></i>
+            <span id="locDisplay">서울 (37.56°N, 126.97°E)</span>
+          </div>
+          <div id="timeDisplay" class="text-[11px] text-slate-400 font-mono-tech mt-0.5">2026-10-23 21:00 KST</div>
+        </div>
+      </div>
+
+      <!-- Live Heading & Altitude HUD -->
+      <div class="glass-panel rounded-2xl px-3 py-2 flex items-center gap-4 text-center pointer-events-auto">
+        <div>
+          <div class="text-[9px] uppercase tracking-wider text-slate-400 font-mono-tech">방위 (Azimuth)</div>
+          <div class="text-sm font-bold text-sky-300 font-mono-tech flex items-center justify-center gap-1">
+            <span id="headingDeg">0°</span>
+            <span id="headingDir" class="text-xs text-sky-400 font-semibold">(북)</span>
+          </div>
+        </div>
+        <div class="h-6 w-px bg-slate-700"></div>
+        <div>
+          <div class="text-[9px] uppercase tracking-wider text-slate-400 font-mono-tech">고도 (Altitude)</div>
+          <div class="text-sm font-bold text-amber-300 font-mono-tech" id="pitchDeg">+45°</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Center Reticle (Aiming Target) -->
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
+      <div class="reticle-anim relative w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center">
+        <!-- Circular ring -->
+        <div class="absolute inset-0 rounded-full border border-sky-400/40"></div>
+        <div class="absolute inset-1 rounded-full border border-dashed border-cyan-400/30"></div>
+        <!-- Crosshair ticks -->
+        <div class="absolute w-2 h-0.5 bg-cyan-400/80 -left-1"></div>
+        <div class="absolute w-2 h-0.5 bg-cyan-400/80 -right-1"></div>
+        <div class="absolute h-2 w-0.5 bg-cyan-400/80 -top-1"></div>
+        <div class="absolute h-2 w-0.5 bg-cyan-400/80 -bottom-1"></div>
+        <div class="w-1.5 h-1.5 rounded-full bg-cyan-300 shadow-[0_0_8px_#38bdf8]"></div>
+      </div>
+    </div>
+
+    <!-- Active Target Info Floating Banner (Appears when aiming at or selecting a constellation) -->
+    <div id="targetBanner" class="self-center glass-panel px-4 py-2 rounded-xl border-cyan-500/40 shadow-xl flex items-center gap-3 transition-all duration-300 transform opacity-0 translate-y-3 pointer-events-auto cursor-pointer">
+      <div class="w-7 h-7 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-300">
+        <i class="ph ph-sparkle text-lg"></i>
+      </div>
+      <div>
+        <div class="text-xs font-semibold text-white flex items-center gap-1.5">
+          <span id="bannerConstName">북두칠성 (큰곰자리)</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800">터치하여 상세정보</span>
+        </div>
+        <div id="bannerConstEng" class="text-[10px] text-slate-300 font-mono-tech">Ursa Major • 밝은 별 7개</div>
+      </div>
+    </div>
+
+    <!-- Bottom Controls & Action Bar -->
+    <footer class="flex flex-col sm:flex-row justify-between items-center gap-3 pointer-events-auto">
+      <!-- Mode & Sensor controls -->
+      <div class="flex items-center gap-2 flex-wrap justify-center">
+        <!-- Sensor Toggle Button -->
+        <button id="btnSensor" class="glass-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium flex items-center gap-2 text-slate-100 hover:text-white shadow-md">
+          <i class="ph ph-compass text-base text-cyan-400"></i>
+          <span id="sensorBtnText">센서 자이로 켜기</span>
+        </button>
+
+        <!-- Camera AR Background Button -->
+        <button id="btnCamera" class="glass-btn px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium flex items-center gap-2 text-slate-100 hover:text-white shadow-md">
+          <i class="ph ph-camera text-base text-violet-400"></i>
+          <span id="cameraBtnText">카메라 배경 (AR)</span>
+        </button>
+
+        <!-- Reset to North Horizon -->
+        <button id="btnReset" title="북쪽 정면으로 시점 맞추기" class="glass-btn p-2.5 rounded-xl text-slate-300 hover:text-white">
+          <i class="ph ph-arrow-counter-clockwise text-base"></i>
+        </button>
+      </div>
+
+      <!-- Quick Constellation Picker -->
+      <div class="flex items-center gap-2 overflow-x-auto max-w-full py-1 px-1">
+        <span class="text-[11px] text-slate-400 whitespace-nowrap pl-1"><i class="ph ph-magnifying-glass"></i> 빠른 이동:</span>
+        <div id="quickNavList" class="flex gap-1.5 overflow-x-auto">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Detail Information Modal / Drawer -->
+  <div id="infoDrawer" class="fixed inset-x-0 bottom-0 z-30 transform translate-y-full transition-transform duration-300 ease-out pointer-events-none">
+    <div class="max-w-lg mx-auto p-4 pointer-events-auto">
+      <div class="glass-panel rounded-3xl p-5 border border-sky-400/30 shadow-2xl relative bg-slate-950/85 backdrop-blur-xl">
+        <!-- Close button -->
+        <button id="btnCloseDrawer" class="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-800/80 text-slate-300 hover:text-white flex items-center justify-center text-sm">
+          <i class="ph ph-x"></i>
+        </button>
+
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-3xl" id="drawerIcon">✨</span>
+          <div>
+            <h3 id="drawerTitle" class="text-xl font-bold text-white tracking-tight">큰곰자리 (북두칠성)</h3>
+            <p id="drawerSub" class="text-xs text-cyan-300 font-mono-tech">Ursa Major • 봄철의 대표 별자리</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 my-3 text-xs">
+          <div class="bg-slate-900/60 rounded-xl p-2.5 border border-slate-800">
+            <span class="text-slate-400 block text-[10px]">주요 밝은 별</span>
+            <span id="drawerBrightStars" class="font-semibold text-slate-200">두베, 메라크, 알리오스</span>
+          </div>
+          <div class="bg-slate-900/60 rounded-xl p-2.5 border border-slate-800">
+            <span class="text-slate-400 block text-[10px]">관측 최적기</span>
+            <span id="drawerSeason" class="font-semibold text-amber-300">사계절 (특히 봄밤)</span>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <div class="text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+            <i class="ph ph-book-open-text text-cyan-400"></i> 이야기 및 관측 팁
+          </div>
+          <p id="drawerDesc" class="text-xs text-slate-300 leading-relaxed max-h-36 overflow-y-auto pr-1">
+            국자 모양을 닮은 7개의 별 북두칠성은 계절에 상관없이 북쪽 하늘에서 항상 쉽게 찾을 수 있는 길잡이 별자리입니다. 끝부분의 두 별(두베와 메라크)을 5배 연장하면 항상 정북을 가리키는 북극성을 찾을 수 있습니다.
+          </p>
+        </div>
+
+        <button id="btnFocusConst" class="w-full mt-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-xs tracking-wider uppercase hover:opacity-95 shadow-lg flex items-center justify-center gap-1.5">
+          <i class="ph ph-crosshair"></i> 이 별자리로 시점 이동하기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast message -->
+  <div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-40 glass-panel px-4 py-2 rounded-xl text-xs font-medium text-cyan-300 border border-cyan-400/40 shadow-xl opacity-0 pointer-events-none transition-all duration-300">
+    알림 메시지
+  </div>
+
+  <script>
+    /* =====================================================================
+       1. Astronomical Database (Major Constellations & Stars)
+       - RA (Right Ascension in Hours: 0 ~ 24h)
+       - Dec (Declination in Degrees: -90° ~ +90°)
+       ===================================================================== */
+    const CONSTELLATIONS = [
+      {
+        id: "ursa_major",
+        name: "북두칠성 (큰곰자리)",
+        eng: "Ursa Major",
+        icon: "🌌",
+        center: { ra: 11.5, dec: 56.0 },
+        season: "사계절 (봄철 최적)",
+        brightStars: "두베, 메라크, 페크다, 메그레즈, 알리오스, 미자르, 알카이드",
+        lore: "국자 모양의 7개 별로 밤하늘의 시계 역할을 합니다. 국자의 앞쪽 두 별(두베와 메라크)을 잇는 선을 5배 연장하면 늘 정북을 가리키는 북극성을 찾을 수 있어 여행자의 영원한 나침반 역할을 해왔습니다.",
+        stars: [
+          { name: "두베 (Dubhe)", ra: 11.06, dec: 61.75, mag: 1.8 },
+          { name: "메라크 (Merak)", ra: 11.03, dec: 56.38, mag: 2.3 },
+          { name: "페크다 (Phecda)", ra: 11.90, dec: 53.69, mag: 2.4 },
+          { name: "메그레즈 (Megrez)", ra: 12.25, dec: 57.03, mag: 3.3 },
+          { name: "알리오스 (Alioth)", ra: 12.90, dec: 55.96, mag: 1.7 },
+          { name: "미자르 (Mizar)", ra: 13.40, dec: 54.92, mag: 2.2 },
+          { name: "알카이드 (Alkaid)", ra: 13.79, dec: 49.31, mag: 1.8 }
+        ],
+        lines: [
+          [0, 1], [1, 2], [2, 3], [3, 0], // 국자 머리
+          [3, 4], [4, 5], [5, 6]          // 국자 손잡이
+        ]
+      },
+      {
+        id: "cassiopeia",
+        name: "카시오페이아자리",
+        eng: "Cassiopeia",
+        icon: "👑",
+        center: { ra: 1.0, dec: 60.5 },
+        season: "사계절 (가을/겨울 최적)",
+        brightStars: "셰다르, 카프, 감마 카시오페이아",
+        lore: "알파벳 'W' 또는 'M' 모양으로 북극성을 두고 북두칠성과 정반대편에서 마주 보며 회전합니다. 그리스 신화 속 에티오피아의 왕비 카시오페이아의 허영심을 벌하기 위해 거꾸로 매달려 도는 벌을 받았다는 이야기가 전해집니다.",
+        stars: [
+          { name: "카프 (Caph)", ra: 0.15, dec: 59.15, mag: 2.2 },
+          { name: "셰다르 (Schedar)", ra: 0.67, dec: 56.54, mag: 2.2 },
+          { name: "나비 (Navi/γ)", ra: 0.94, dec: 60.72, mag: 2.1 },
+          { name: "루크바 (Ruchbah)", ra: 1.43, dec: 60.23, mag: 2.6 },
+          { name: "세긴 (Segin)", ra: 1.90, dec: 63.67, mag: 3.3 }
+        ],
+        lines: [
+          [0, 1], [1, 2], [2, 3], [3, 4]
+        ]
+      },
+      {
+        id: "orion",
+        name: "오리온자리",
+        eng: "Orion",
+        icon: "🏹",
+        center: { ra: 5.5, dec: 2.0 },
+        season: "겨울철",
+        brightStars: "베텔게우스, 리겔, 벨라트릭스",
+        lore: "겨울철 밤하늘의 제왕이자 가장 웅장한 별자리입니다. 붉은 초거성 베텔게우스와 푸른 초거성 리겔, 그리고 중앙에 나란히 놓인 3개의 별(오리온 삼태성: 민타카, 알닐람, 알니탁)이 사냥꾼의 뚜렷한 허리띠를 구성합니다.",
+        stars: [
+          { name: "베텔게우스 (Betelgeuse)", ra: 5.92, dec: 7.41, mag: 0.5, color: "#ff8243" }, // 붉은 초거성
+          { name: "리겔 (Rigel)", ra: 5.24, dec: -8.20, mag: 0.1, color: "#8ab4f8" },         // 청백색 초거성
+          { name: "벨라트릭스 (Bellatrix)", ra: 5.42, dec: 6.35, mag: 1.6 },
+          { name: "사이프 (Saiph)", ra: 5.79, dec: -9.67, mag: 2.0 },
+          { name: "알니탁 (Alnitak)", ra: 5.68, dec: -1.94, mag: 1.7 },
+          { name: "알닐람 (Alnilam)", ra: 5.60, dec: -1.20, mag: 1.6 },
+          { name: "민타카 (Mintaka)", ra: 5.53, dec: -0.30, mag: 2.2 }
+        ],
+        lines: [
+          [0, 2], [2, 6], [6, 5], [5, 4], [4, 1], [1, 3], [3, 0], // 외곽 사각형
+          [6, 5], [5, 4]                                          // 허리띠
+        ]
+      },
+      {
+        id: "cygnus",
+        name: "백조자리 (북십자성)",
+        eng: "Cygnus",
+        icon: "🦢",
+        center: { ra: 20.6, dec: 42.0 },
+        season: "여름/가을철",
+        brightStars: "데네브, 알비레오, 사드르",
+        lore: "은하수 한가운데를 날아가는 거대한 백조 모양이자 십자가 모양을 하고 있어 '북십자성'이라 불립니다. 꼬리에 위치한 데네브는 직녀성, 견우성과 함께 '여름철 대삼각형'을 형성합니다.",
+        stars: [
+          { name: "데네브 (Deneb)", ra: 20.69, dec: 45.28, mag: 1.25, color: "#dbeafe" },
+          { name: "사드르 (Sadr)", ra: 20.37, dec: 40.26, mag: 2.2 },
+          { name: "알비레오 (Albireo)", ra: 19.51, dec: 27.96, mag: 3.0 },
+          { name: "기에나 (Gienah)", ra: 20.77, dec: 33.97, mag: 2.4 },
+          { name: "루크바 (Rukh)", ra: 19.60, dec: 45.13, mag: 2.8 }
+        ],
+        lines: [
+          [0, 1], [1, 2], // 척추 라인
+          [4, 1], [1, 3]  // 날개 라인
+        ]
+      },
+      {
+        id: "lyra",
+        name: "거문고자리 (직녀성)",
+        eng: "Lyra",
+        icon: "🪕",
+        center: { ra: 18.8, dec: 36.0 },
+        season: "여름/가을철",
+        brightStars: "베가 (직녀성, 0.03등성)",
+        lore: "견우직녀 설화에서 은하수를 사이에 두고 견우를 그리워하는 직녀의 별 '베가(Vega)'가 있는 별자리입니다. 하늘에서 다섯 번째로 밝고 푸르스름하게 빛나는 영롱한 청백색 별입니다.",
+        stars: [
+          { name: "베가 (Vega/직녀)", ra: 18.61, dec: 38.78, mag: 0.03, color: "#bfdbfe" },
+          { name: "셀리아크 (Sheliak)", ra: 18.83, dec: 33.36, mag: 3.5 },
+          { name: "술라파트 (Sulafat)", ra: 18.98, dec: 32.69, mag: 3.2 },
+          { name: "델타 거문고 (Delta)", ra: 18.90, dec: 36.90, mag: 4.3 },
+          { name: "제타 거문고 (Zeta)", ra: 18.74, dec: 37.60, mag: 4.3 }
+        ],
+        lines: [
+          [0, 4], [0, 3], [3, 2], [2, 1], [1, 4]
+        ]
+      },
+      {
+        id: "aquila",
+        name: "독수리자리 (견우성)",
+        eng: "Aquila",
+        icon: "🦅",
+        center: { ra: 19.8, dec: 8.5 },
+        season: "여름/가을철",
+        brightStars: "알타이르 (견우성, 0.77등성)",
+        lore: "은하수 건너편 직녀성을 바라보는 성실한 목동 '견우성(알타이르)'이 자리한 별자리입니다. 양옆에 보좌하는 두 별을 거느리고 있는 모습이 인상적입니다.",
+        stars: [
+          { name: "알타이르 (Altair/견우)", ra: 19.84, dec: 8.87, mag: 0.77, color: "#fef08a" },
+          { name: "타라제드 (Tarazed)", ra: 19.77, dec: 10.61, mag: 2.7 },
+          { name: "알샤인 (Alshain)", ra: 19.92, dec: 6.40, mag: 3.7 },
+          { name: "데네브 오캅 (Deneb Okab)", ra: 19.08, dec: 13.86, mag: 2.9 },
+          { name: "알미잔 (Theta Aql)", ra: 20.18, dec: -0.82, mag: 3.2 }
+        ],
+        lines: [
+          [1, 0], [0, 2], [0, 3], [0, 4]
+        ]
+      },
+      {
+        id: "canis_major",
+        name: "큰개자리 (시리우스)",
+        eng: "Canis Major",
+        icon: "🐕",
+        center: { ra: 6.8, dec: -22.0 },
+        season: "겨울철",
+        brightStars: "시리우스 (-1.46등성, 밤하늘에서 가장 밝은 별)",
+        lore: "사냥꾼 오리온을 충직하게 뒤따르는 사냥개의 별자리입니다. 중심의 시리우스는 태양을 제외하고 지구 밤하늘 전체에서 가장 눈부시게 번쩍이는 다이아몬드 같은 별입니다.",
+        stars: [
+          { name: "시리우스 (Sirius)", ra: 6.75, dec: -16.72, mag: -1.46, color: "#ffffff" },
+          { name: "미르잠 (Mirzam)", ra: 6.38, dec: -17.96, mag: 2.0 },
+          { name: "웨젠 (Wezen)", ra: 7.14, dec: -26.39, mag: 1.8 },
+          { name: "아드하라 (Adhara)", ra: 6.98, dec: -28.97, mag: 1.5 },
+          { name: "알루드라 (Aludra)", ra: 7.40, dec: -29.30, mag: 2.4 }
+        ],
+        lines: [
+          [1, 0], [0, 2], [2, 3], [2, 4]
+        ]
+      },
+      {
+        id: "leo",
+        name: "사자자리",
+        eng: "Leo",
+        icon: "🦁",
+        center: { ra: 10.6, dec: 15.0 },
+        season: "봄철",
+        brightStars: "레굴루스 (1등성), 데네볼라",
+        lore: "봄밤 남쪽 하늘 높이 떠오르는 맹수 사자의 별자리입니다. 머리 부분이 물음표를 뒤집어 놓은 '낫(Sickle)' 모양을 하고 있으며 가슴에는 '작은 왕'을 뜻하는 레굴루스가 빛납니다.",
+        stars: [
+          { name: "레굴루스 (Regulus)", ra: 10.14, dec: 11.97, mag: 1.36, color: "#bfdbfe" },
+          { name: "데네볼라 (Denebola)", ra: 11.82, dec: 14.57, mag: 2.14 },
+          { name: "알기에바 (Algieba)", ra: 10.33, dec: 19.84, mag: 2.0 },
+          { name: "조스마 (Zosma)", ra: 11.23, dec: 20.52, mag: 2.5 },
+          { name: "알게누비 (Ras Elased)", ra: 9.76, dec: 23.77, mag: 2.9 },
+          { name: "아드하페라 (Adhafera)", ra: 10.28, dec: 23.42, mag: 3.4 }
+        ],
+        lines: [
+          [0, 2], [2, 5], [5, 4], // 머리 낫 갈고리
+          [2, 3], [3, 1], [1, 0]  // 몸통
+        ]
+      },
+      {
+        id: "scorpius",
+        name: "전갈자리",
+        eng: "Scorpius",
+        icon: "🦂",
+        center: { ra: 16.9, dec: -30.0 },
+        season: "여름철",
+        brightStars: "안타레스 (1등성, 붉은 심장), 샤울라",
+        lore: "여름밤 남쪽 지평선 위로 날카로운 독침 꼬리를 드리우는 대표적인 별자리입니다. 심장부에 위치한 '안타레스'는 화성(Ares)에 필적할 만큼 불타는 듯한 붉은빛을 띱니다.",
+        stars: [
+          { name: "안타레스 (Antares)", ra: 16.49, dec: -26.43, mag: 0.96, color: "#ef4444" },
+          { name: "그라피아스 (Graffias)", ra: 16.09, dec: -19.80, mag: 2.6 },
+          { name: "드슈바 (Dschubba)", ra: 16.00, dec: -22.62, mag: 2.3 },
+          { name: "사르가스 (Sargas)", ra: 17.62, dec: -43.00, mag: 1.8 },
+          { name: "샤울라 (Shaula)", ra: 17.56, dec: -37.10, mag: 1.6 }
+        ],
+        lines: [
+          [1, 2], [2, 0], [0, 3], [3, 4]
+        ]
+      },
+      {
+        id: "taurus",
+        name: "황소자리",
+        eng: "Taurus",
+        icon: "🐂",
+        center: { ra: 4.5, dec: 18.0 },
+        season: "겨울철",
+        brightStars: "알데바란, 플레이아데스 성단 (좀생이별)",
+        lore: "황소의 붉은 눈을 상징하는 알데바란과, 맨눈으로도 예쁜 별무리가 모여 보이는 '플레이아데스 산개성단'을 품고 있는 겨울철 대표 별자리입니다.",
+        stars: [
+          { name: "알데바란 (Aldebaran)", ra: 4.60, dec: 16.51, mag: 0.85, color: "#f97316" },
+          { name: "엘나스 (Elnath)", ra: 5.44, dec: 28.61, mag: 1.65 },
+          { name: "티앙구안 (Zeta Tau)", ra: 5.63, dec: 21.14, mag: 3.0 },
+          { name: "알키오네 (Alcyone)", ra: 3.79, dec: 24.11, mag: 2.87 }
+        ],
+        lines: [
+          [0, 1], [0, 2], [0, 3]
+        ]
+      }
+    ];
+
+    // Background ambient random stars (for density & realism)
+    const AMBIENT_STARS = [];
+    for (let i = 0; i < 280; i++) {
+      AMBIENT_STARS.push({
+        ra: Math.random() * 24,
+        dec: (Math.random() * 160) - 80,
+        mag: 3.5 + Math.random() * 2.8,
+        twinkleOffset: Math.random() * Math.PI * 2,
+        twinkleSpeed: 0.8 + Math.random() * 2.5
+      });
+    }
+
+    /* =====================================================================
+       2. Astronomical Calculation Engine (RA/Dec -> Alt/Az)
+       - Local Sidereal Time (LST) calculation for observer
+       - Real-time conversion into Altitude (고도) & Azimuth (방위각)
+       ===================================================================== */
+    // Default: Seoul (Latitude: 37.5665° N, Longitude: 126.9780° E)
+    let observerLat = 37.5665;
+    let observerLon = 126.9780;
+
+    function getLocalSiderealTime(date, lonDeg) {
+      // Julian Date calculation
+      const timeMs = date.getTime();
+      const jd = (timeMs / 86400000.0) + 2440587.5;
+      const d = jd - 2451545.0; // days since J2000.0
+      
+      // Greenwich Mean Sidereal Time in degrees
+      let gmst = 280.46061837 + 360.98564736629 * d;
+      gmst = ((gmst % 360) + 360) % 360;
+      
+      // Local Sidereal Time in Hours (0 - 24h)
+      let lstDeg = gmst + lonDeg;
+      lstDeg = ((lstDeg % 360) + 360) % 360;
+      return lstDeg / 15.0;
+    }
+
+    function raDecToAltAz(raHours, decDeg, lstHours, latDeg) {
+      const deg2rad = Math.PI / 180;
+      const rad2deg = 180 / Math.PI;
+
+      // Hour Angle (H) in degrees: H = LST - RA
+      let haDeg = (lstHours - raHours) * 15.0;
+      haDeg = ((haDeg % 360) + 360) % 360;
+
+      const phi = latDeg * deg2rad;
+      const delta = decDeg * deg2rad;
+      const H = haDeg * deg2rad;
+
+      // Altitude (a)
+      const sinAlt = Math.sin(phi) * Math.sin(delta) + Math.cos(phi) * Math.cos(delta) * Math.cos(H);
+      const altRad = Math.asin(Math.max(-1, Math.min(1, sinAlt)));
+      const altDeg = altRad * rad2deg;
+
+      // Azimuth (A) measured clockwise from North (0° = North, 90° = East, 180° = South, 270° = West)
+      const cosAz = (Math.sin(delta) - Math.sin(phi) * Math.sin(altRad)) / (Math.cos(phi) * Math.cos(altRad));
+      let azRad = Math.acos(Math.max(-1, Math.min(1, cosAz)));
+      
+      if (Math.sin(H) > 0) {
+        azRad = 2 * Math.PI - azRad;
+      }
+      const azDeg = azRad * rad2deg;
+
+      return { alt: altDeg, az: azDeg };
+    }
+
+    /* =====================================================================
+       3. Viewport & Camera Orientation State
+       ===================================================================== */
+    const state = {
+      // View direction
+      heading: 0,    // 0° = North, 90° = East, 180° = South, 270° = West
+      pitch: 40,     // 0° = Horizon, 90° = Zenith (하늘 꼭대기)
+      roll: 0,       // tilt angle
+      fov: 75,       // Field of view in degrees
+
+      // User interaction
+      sensorActive: false,
+      cameraActive: false,
+      isDragging: false,
+      lastMouseX: 0,
+      lastMouseY: 0,
+
+      // Target selection
+      targetedConstellation: null,
+      selectedConstellation: null,
+      smoothTransition: null
+    };
+
+    /* =====================================================================
+       4. Canvas Rendering Engine
+       ===================================================================== */
+    const canvas = document.getElementById('skyCanvas');
+    const ctx = canvas.getContext('2d');
+    const video = document.getElementById('cameraFeed');
+
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      ctx.scale(dpr, dpr);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Map spherical horizontal coords (alt, az) to screen (x, y)
+    function projectToScreen(alt, az, width, height) {
+      // Angular difference relative to current heading & pitch
+      let dAz = az - state.heading;
+      while (dAz > 180) dAz -= 360;
+      while (dAz < -180) dAz += 360;
+
+      const dAlt = alt - state.pitch;
+
+      // Angular distance check to avoid wrap-around rendering
+      if (Math.abs(dAz) > 85 || Math.abs(dAlt) > 75) {
+        return null; // Outside camera cone
+      }
+
+      // Convert angles with Roll rotation
+      const rad = state.roll * (Math.PI / 180);
+      const cosR = Math.cos(rad);
+      const sinR = Math.sin(rad);
+
+      // Pixel scale per degree based on FOV
+      const pixelsPerDeg = (Math.hypot(width, height) / 2) / (state.fov / 2);
+      
+      // Unrotated camera plane delta
+      const rawX = dAz * pixelsPerDeg;
+      const rawY = -dAlt * pixelsPerDeg; // Screen Y goes downward
+
+      // Apply roll rotation
+      const rotX = rawX * cosR - rawY * sinR;
+      const rotY = rawX * sinR + rawY * cosR;
+
+      const screenX = (width / 2) + rotX;
+      const screenY = (height / 2) + rotY;
+
+      return { x: screenX, y: screenY };
+    }
+
+    // Main Draw Loop
+    function renderSky() {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const now = new Date();
+      const lst = getLocalSiderealTime(now, observerLon);
+
+      // Clear Canvas (Transparent if camera AR is enabled, else Deep Cosmic Gradient)
+      if (state.cameraActive) {
+        ctx.clearRect(0, 0, width, height);
+      } else {
+        const bgGrad = ctx.createRadialGradient(
+          width / 2, height * 0.45, 10,
+          width / 2, height * 0.5, Math.max(width, height) * 0.85
+        );
+        bgGrad.addColorStop(0, '#0d1527');
+        bgGrad.addColorStop(0.55, '#050814');
+        bgGrad.addColorStop(1, '#020308');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      // 1. Draw Horizon Line & Compass Cardinal Directions
+      drawHorizonAndCardinals(width, height);
+
+      // 2. Draw Random Ambient Background Stars
+      drawAmbientStars(width, height, lst, now);
+
+      // 3. Draw Major Constellations & Constellation Lines
+      let closestConst = null;
+      let minCenterDist = Infinity;
+      const centerScreen = { x: width / 2, y: height / 2 };
+
+      CONSTELLATIONS.forEach((constellation) => {
+        // Calculate center on screen
+        const centerCoords = raDecToAltAz(constellation.center.ra, constellation.center.dec, lst, observerLat);
+        const centerPt = projectToScreen(centerCoords.alt, centerCoords.az, width, height);
+
+        // Project individual stars
+        const projectedStars = constellation.stars.map((s) => {
+          const coords = raDecToAltAz(s.ra, s.dec, lst, observerLat);
+          const pt = projectToScreen(coords.alt, coords.az, width, height);
+          return { ...s, pt, alt: coords.alt, az: coords.az };
+        });
+
+        // Draw Lines
+        ctx.lineWidth = 1.25;
+        const isFocused = (state.targetedConstellation === constellation || state.selectedConstellation === constellation);
+        ctx.strokeStyle = isFocused ? 'rgba(56, 189, 248, 0.85)' : 'rgba(125, 211, 252, 0.28)';
+        if (isFocused) {
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 12;
+        }
+
+        constellation.lines.forEach(([i, j]) => {
+          const p1 = projectedStars[i]?.pt;
+          const p2 = projectedStars[j]?.pt;
+          if (p1 && p2) {
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+          }
+        });
+        ctx.shadowBlur = 0; // Reset shadow
+
+        // Draw Star Points & Glints
+        projectedStars.forEach((star) => {
+          if (!star.pt) return;
+          const radius = Math.max(1.8, 4.2 - (star.mag * 0.7));
+          
+          // Star Glow
+          ctx.beginPath();
+          const starColor = star.color || '#e0f2fe';
+          const glowGrad = ctx.createRadialGradient(star.pt.x, star.pt.y, 0, star.pt.x, star.pt.y, radius * 3.5);
+          glowGrad.addColorStop(0, starColor);
+          glowGrad.addColorStop(0.3, starColor);
+          glowGrad.addColorStop(1, 'transparent');
+          ctx.fillStyle = glowGrad;
+          ctx.arc(star.pt.x, star.pt.y, radius * 3.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Star Core
+          ctx.beginPath();
+          ctx.fillStyle = '#ffffff';
+          ctx.arc(star.pt.x, star.pt.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Label brightest stars if zoomed or prominent
+          if (star.mag < 1.4 && isFocused) {
+            ctx.font = '10px Pretendard';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.fillText(star.name.split(' ')[0], star.pt.x + 8, star.pt.y - 4);
+          }
+        });
+
+        // Constellation Name Plate / Label
+        if (centerPt) {
+          ctx.textAlign = 'center';
+          ctx.font = isFocused ? 'bold 14px Pretendard' : '600 12px Pretendard';
+          ctx.fillStyle = isFocused ? '#38bdf8' : 'rgba(224, 242, 254, 0.75)';
+          
+          // Background badge for readability
+          const labelText = constellation.name;
+          const textWidth = ctx.measureText(labelText).width;
+          ctx.fillStyle = 'rgba(10, 16, 32, 0.65)';
+          ctx.roundRect(centerPt.x - (textWidth / 2) - 8, centerPt.y - 14, textWidth + 16, 20, 6);
+          ctx.fill();
+
+          ctx.fillStyle = isFocused ? '#38bdf8' : '#e0f2fe';
+          ctx.fillText(labelText, centerPt.x, centerPt.y);
+
+          // Check distance to center reticle
+          const distToCenter = Math.hypot(centerPt.x - centerScreen.x, centerPt.y - centerScreen.y);
+          if (distToCenter < 120 && distToCenter < minCenterDist) {
+            minCenterDist = distToCenter;
+            closestConst = constellation;
+          }
+        }
+      });
+
+      // Update Target Banner
+      updateTargetBanner(closestConst);
+
+      // Handle Smooth Animation when snapping to a constellation
+      if (state.smoothTransition) {
+        stepSmoothTransition();
+      }
+
+      // Update HUD Numbers
+      updateHUDDisplay();
+
+      requestAnimationFrame(renderSky);
+    }
+
+    // Draw cardinal direction points (N, E, S, W) on horizon
+    function drawHorizonAndCardinals(width, height) {
+      const cardinals = [
+        { label: "N (북)", az: 0 },
+        { label: "NE (북동)", az: 45 },
+        { label: "E (동)", az: 90 },
+        { label: "SE (남동)", az: 135 },
+        { label: "S (남)", az: 180 },
+        { label: "SW (남서)", az: 225 },
+        { label: "W (서)", az: 270 },
+        { label: "NW (북서)", az: 315 },
+      ];
+
+      // Draw dashed horizon line
+      ctx.save();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 6]);
+
+      for (let az = 0; az < 360; az += 10) {
+        const pt1 = projectToScreen(0, az, width, height);
+        const pt2 = projectToScreen(0, az + 10, width, height);
+        if (pt1 && pt2) {
+          ctx.beginPath();
+          ctx.moveTo(pt1.x, pt1.y);
+          ctx.lineTo(pt2.x, pt2.y);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // Cardinal Labels
+      cardinals.forEach((c) => {
+        const pt = projectToScreen(0, c.az, width, height);
+        if (pt) {
+          ctx.textAlign = 'center';
+          ctx.font = 'bold 11px Space Grotesk, sans-serif';
+          ctx.fillStyle = c.label.startsWith('N') ? '#38bdf8' : 'rgba(255, 255, 255, 0.5)';
+          ctx.fillText(c.label, pt.x, pt.y + 14);
+
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fill();
+        }
+      });
+    }
+
+    // Draw ambient random starfield
+    function drawAmbientStars(width, height, lst, now) {
+      const t = now.getTime() * 0.002;
+      AMBIENT_STARS.forEach((star) => {
+        const coords = raDecToAltAz(star.ra, star.dec, lst, observerLat);
+        const pt = projectToScreen(coords.alt, coords.az, width, height);
+        if (pt) {
+          const twinkle = (Math.sin(t * star.twinkleSpeed + star.twinkleOffset) + 1) * 0.5;
+          const alpha = 0.25 + twinkle * 0.55;
+          const r = Math.max(0.8, 2.2 - (star.mag * 0.35));
+
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(224, 242, 254, ${alpha})`;
+          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    }
+
+    /* =====================================================================
+       5. Interaction, HUD & Orientation Controls
+       ===================================================================== */
+    const headingDegEl = document.getElementById('headingDeg');
+    const headingDirEl = document.getElementById('headingDir');
+    const pitchDegEl = document.getElementById('pitchDeg');
+    const timeDisplayEl = document.getElementById('timeDisplay');
+    const targetBanner = document.getElementById('targetBanner');
+    const bannerConstName = document.getElementById('bannerConstName');
+    const bannerConstEng = document.getElementById('bannerConstEng');
+
+    function updateHUDDisplay() {
+      const normHeading = Math.round(((state.heading % 360) + 360) % 360);
+      headingDegEl.textContent = `${normHeading}°`;
+
+      let dir = '북';
+      if (normHeading >= 22.5 && normHeading < 67.5) dir = '북동';
+      else if (normHeading >= 67.5 && normHeading < 112.5) dir = '동';
+      else if (normHeading >= 112.5 && normHeading < 157.5) dir = '남동';
+      else if (normHeading >= 157.5 && normHeading < 202.5) dir = '남';
+      else if (normHeading >= 202.5 && normHeading < 247.5) dir = '남서';
+      else if (normHeading >= 247.5 && normHeading < 292.5) dir = '서';
+      else if (normHeading >= 292.5 && normHeading < 337.5) dir = '북서';
+      headingDirEl.textContent = `(${dir})`;
+
+      const roundedPitch = Math.round(state.pitch);
+      pitchDegEl.textContent = `${roundedPitch >= 0 ? '+' : ''}${roundedPitch}°`;
+
+      // Update Clock
+      const now = new Date();
+      timeDisplayEl.textContent = now.toLocaleTimeString('ko-KR', { hour12: false }) + ' 기준';
+    }
+
+    function updateTargetBanner(constellation) {
+      state.targetedConstellation = constellation;
+      if (constellation) {
+        bannerConstName.textContent = constellation.name;
+        bannerConstEng.textContent = `${constellation.eng} • ${constellation.brightStars.split(',')[0]} 등`;
+        targetBanner.classList.remove('opacity-0', 'translate-y-3');
+        targetBanner.classList.add('opacity-100', 'translate-y-0');
+      } else if (!state.selectedConstellation) {
+        targetBanner.classList.remove('opacity-100', 'translate-y-0');
+        targetBanner.classList.add('opacity-0', 'translate-y-3');
+      }
+    }
+
+    // Touch & Mouse Dragging for Desktop & manual exploration
+    canvas.addEventListener('mousedown', (e) => {
+      state.isDragging = true;
+      state.lastMouseX = e.clientX;
+      state.lastMouseY = e.clientY;
+      state.sensorActive = false; // Disable sensor upon manual drag
+      updateSensorBtnUI();
+    });
+
+    window.addEventListener('mouseup', () => { state.isDragging = false; });
+    window.addEventListener('mousemove', (e) => {
+      if (!state.isDragging) return;
+      const dx = e.clientX - state.lastMouseX;
+      const dy = e.clientY - state.lastMouseY;
+      state.lastMouseX = e.clientX;
+      state.lastMouseY = e.clientY;
+
+      const sensitivity = 0.22;
+      state.heading = ((state.heading - dx * sensitivity) % 360 + 360) % 360;
+      state.pitch = Math.max(-80, Math.min(88, state.pitch + dy * sensitivity));
+    });
+
+    // Touch Event Handling
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        state.isDragging = true;
+        state.lastMouseX = e.touches[0].clientX;
+        state.lastMouseY = e.touches[0].clientY;
+        state.sensorActive = false;
+        updateSensorBtnUI();
+      }
+    }, { passive: true });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (!state.isDragging || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - state.lastMouseX;
+      const dy = e.touches[0].clientY - state.lastMouseY;
+      state.lastMouseX = e.touches[0].clientX;
+      state.lastMouseY = e.touches[0].clientY;
+
+      const sensitivity = 0.28;
+      state.heading = ((state.heading - dx * sensitivity) % 360 + 360) % 360;
+      state.pitch = Math.max(-80, Math.min(88, state.pitch + dy * sensitivity));
+    }, { passive: true });
+
+    canvas.addEventListener('touchend', () => { state.isDragging = false; });
+
+    // Handle Tap on Canvas to select constellation
+    canvas.addEventListener('click', (e) => {
+      const clickX = e.clientX;
+      const clickY = e.clientY;
+      const now = new Date();
+      const lst = getLocalSiderealTime(now, observerLon);
+
+      for (let c of CONSTELLATIONS) {
+        const centerCoords = raDecToAltAz(c.center.ra, c.center.dec, lst, observerLat);
+        const pt = projectToScreen(centerCoords.alt, centerCoords.az, window.innerWidth, window.innerHeight);
+        if (pt && Math.hypot(pt.x - clickX, pt.y - clickY) < 45) {
+          openDetailDrawer(c);
+          return;
+        }
+      }
+      
+      // If clicking center banner or reticle
+      if (state.targetedConstellation) {
+        openDetailDrawer(state.targetedConstellation);
+      }
+    });
+
+    /* =====================================================================
+       6. Smartphone Gyroscope & Compass (DeviceOrientation)
+       ===================================================================== */
+    const btnSensor = document.getElementById('btnSensor');
+    const sensorBtnText = document.getElementById('sensorBtnText');
+
+    function updateSensorBtnUI() {
+      if (state.sensorActive) {
+        btnSensor.classList.add('active');
+        sensorBtnText.textContent = "센서 끄기 (수동)";
+      } else {
+        btnSensor.classList.remove('active');
+        sensorBtnText.textContent = "센서 자이로 켜기";
+      }
+    }
+
+    function handleOrientation(e) {
+      if (!state.sensorActive) return;
+
+      // Compass Heading: webkitCompassHeading for iOS, alpha for Android
+      let heading = 0;
+      if (e.webkitCompassHeading !== undefined) {
+        heading = e.webkitCompassHeading; // 0 = True North
+      } else if (e.alpha !== null) {
+        heading = 360 - e.alpha;
+      }
+
+      // Pitch (Tilt forward/back): beta ranges -180 to 180
+      // When phone is upright facing horizon: beta ~ 90°
+      // When pointed directly up at sky: beta ~ 0°
+      let pitch = 0;
+      if (e.beta !== null) {
+        pitch = 90 - e.beta; 
+      }
+
+      // Roll: gamma
+      const roll = e.gamma || 0;
+
+      // Smooth interpolation for jitter-free viewing
+      state.heading += (((heading - state.heading + 540) % 360) - 180) * 0.15;
+      state.pitch += (pitch - state.pitch) * 0.15;
+      state.roll += (roll - state.roll) * 0.15;
+    }
+
+    async function toggleSensor() {
+      if (state.sensorActive) {
+        state.sensorActive = false;
+        window.removeEventListener('deviceorientation', handleOrientation);
+        showToast("센서 모드가 꺼졌습니다. 화면을 드래그해 탐색하세요.");
+        updateSensorBtnUI();
+        return;
+      }
+
+      // iOS 13+ requires explicit user gesture permission request
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission === 'granted') {
+            state.sensorActive = true;
+            window.addEventListener('deviceorientation', handleOrientation);
+            showToast("스마트폰을 하늘로 향해 별자리를 비춰보세요!");
+            updateSensorBtnUI();
+          } else {
+            showToast("센서 사용 권한이 거부되었습니다.");
+          }
+        } catch (err) {
+          showToast("센서 권한 요청 오류: " + err.message);
+        }
+      } else if ('ondeviceorientation' in window) {
+        // Android and standards-compliant desktop/browsers
+        state.sensorActive = true;
+        window.addEventListener('deviceorientation', handleOrientation);
+        showToast("센서 자이로가 활성화되었습니다.");
+        updateSensorBtnUI();
+      } else {
+        showToast("현재 기기/브라우저가 자이로 센서를 지원하지 않습니다.");
+      }
+    }
+    btnSensor.addEventListener('click', toggleSensor);
+
+    /* =====================================================================
+       7. AR Mode (Camera Video Stream Overlay)
+       ===================================================================== */
+    const btnCamera = document.getElementById('btnCamera');
+    const cameraBtnText = document.getElementById('cameraBtnText');
+
+    async function toggleCamera() {
+      if (state.cameraActive) {
+        // Turn off camera
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(track => track.stop());
+          video.srcObject = null;
+        }
+        video.classList.add('hidden');
+        state.cameraActive = false;
+        btnCamera.classList.remove('active');
+        cameraBtnText.textContent = "카메라 배경 (AR)";
+        showToast("AR 카메라가 꺼졌습니다.");
+        return;
+      }
+
+      // Turn on camera (facing rear/environment on mobile)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+        video.srcObject = stream;
+        video.classList.remove('hidden');
+        state.cameraActive = true;
+        btnCamera.classList.add('active');
+        cameraBtnText.textContent = "카메라 끄기";
+        showToast("실제 밤하늘과 별자리를 겹쳐서 보는 AR 모드 활성화!");
+      } catch (err) {
+        showToast("카메라 접근 실패: 권한 또는 HTTPS 환경을 확인해주세요.");
+      }
+    }
+    btnCamera.addEventListener('click', toggleCamera);
+
+    // Reset View Button (Facing North, 45° Altitude)
+    document.getElementById('btnReset').addEventListener('click', () => {
+      smoothSlerpTo(0, 45);
+      showToast("북쪽 지평선(North 45°)으로 시점을 정렬했습니다.");
+    });
+
+    /* =====================================================================
+       8. Quick Constellation Navigation & Drawer Modal
+       ===================================================================== */
+    const quickNavList = document.getElementById('quickNavList');
+    CONSTELLATIONS.forEach((c) => {
+      const chip = document.createElement('button');
+      chip.className = "glass-btn px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap text-slate-200 hover:text-cyan-300 font-medium";
+      chip.textContent = `${c.icon} ${c.name.split(' ')[0]}`;
+      chip.addEventListener('click', () => {
+        focusConstellation(c);
+      });
+      quickNavList.appendChild(chip);
+    });
+
+    function smoothSlerpTo(targetHeading, targetPitch) {
+      state.sensorActive = false;
+      updateSensorBtnUI();
+
+      let startH = state.heading;
+      let diffH = ((targetHeading - startH + 540) % 360) - 180;
+      let startP = state.pitch;
+      let diffP = targetPitch - startP;
+
+      let progress = 0;
+      state.smoothTransition = () => {
+        progress += 0.05;
+        if (progress >= 1) {
+          state.heading = targetHeading;
+          state.pitch = targetPitch;
+          state.smoothTransition = null;
+        } else {
+          // Ease-out cubic
+          const ease = 1 - Math.pow(1 - progress, 3);
+          state.heading = startH + diffH * ease;
+          state.pitch = startP + diffP * ease;
+        }
+      };
+    }
+
+    function stepSmoothTransition() {
+      if (state.smoothTransition) state.smoothTransition();
+    }
+
+    function focusConstellation(c) {
+      const now = new Date();
+      const lst = getLocalSiderealTime(now, observerLon);
+      const coords = raDecToAltAz(c.center.ra, c.center.dec, lst, observerLat);
+      
+      smoothSlerpTo(coords.az, Math.max(-20, Math.min(85, coords.alt)));
+      openDetailDrawer(c);
+    }
+
+    // Detail Drawer Modal
+    const infoDrawer = document.getElementById('infoDrawer');
+    const drawerIcon = document.getElementById('drawerIcon');
+    const drawerTitle = document.getElementById('drawerTitle');
+    const drawerSub = document.getElementById('drawerSub');
+    const drawerBrightStars = document.getElementById('drawerBrightStars');
+    const drawerSeason = document.getElementById('drawerSeason');
+    const drawerDesc = document.getElementById('drawerDesc');
+    const btnFocusConst = document.getElementById('btnFocusConst');
+
+    function openDetailDrawer(c) {
+      state.selectedConstellation = c;
+      drawerIcon.textContent = c.icon;
+      drawerTitle.textContent = c.name;
+      drawerSub.textContent = `${c.eng} • ${c.season}`;
+      drawerBrightStars.textContent = c.brightStars;
+      drawerSeason.textContent = c.season;
+      drawerDesc.textContent = c.lore;
+      
+      btnFocusConst.onclick = () => {
+        focusConstellation(c);
+        closeDrawer();
+      };
+
+      infoDrawer.classList.remove('translate-y-full');
+    }
+
+    function closeDrawer() {
+      infoDrawer.classList.add('translate-y-full');
+      state.selectedConstellation = null;
+    }
+    document.getElementById('btnCloseDrawer').addEventListener('click', closeDrawer);
+    targetBanner.addEventListener('click', () => {
+      if (state.targetedConstellation) openDetailDrawer(state.targetedConstellation);
+    });
+
+    // Toast Notification helper
+    const toast = document.getElementById('toast');
+    let toastTimeout;
+    function showToast(msg) {
+      clearTimeout(toastTimeout);
+      toast.textContent = msg;
+      toast.classList.remove('opacity-0', 'pointer-events-none');
+      toast.classList.add('opacity-100');
+      toastTimeout = setTimeout(() => {
+        toast.classList.remove('opacity-100');
+        toast.classList.add('opacity-0', 'pointer-events-none');
+      }, 3000);
+    }
+
+    /* =====================================================================
+       9. Geolocation Auto-Detection
+       ===================================================================== */
+    const locDisplay = document.getElementById('locDisplay');
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          observerLat = pos.coords.latitude;
+          observerLon = pos.coords.longitude;
+          locDisplay.textContent = `현재 위치 (${observerLat.toFixed(2)}°N, ${observerLon.toFixed(2)}°E)`;
+        },
+        () => {
+          // Defaults to Seoul
+          locDisplay.textContent = "서울 (37.56°N, 126.97°E)";
+        },
+        { timeout: 7000 }
+      );
+    }
+
+    /* =====================================================================
+       10. Start Application
+       ===================================================================== */
+    window.onload = function() {
+      // Start sky render loop
+      renderSky();
+    };
+  </script>
+</body>
+</html>
